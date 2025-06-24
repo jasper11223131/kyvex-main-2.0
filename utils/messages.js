@@ -121,7 +121,7 @@ module.exports = {
         }
 
         if (queue.length) {
-            const tracks = queue.map((track, i) => 
+            const tracks = queue.map((track, i) =>
                 `\`${(i + 1).toString().padStart(2, '0')}\` ${emojis.song} [${track.info.title}](${track.info.uri}) - ${getDurationString(track)}`
             ).join('\n');
             embed.addFields({ name: '\u200b', value: tracks });
@@ -135,12 +135,12 @@ module.exports = {
             }, 0);
 
             const streamCount = queue.filter(t => t.info.isStream).length;
-            const durationText = streamCount > 0 
+            const durationText = streamCount > 0
                 ? `Total Duration: ${formatDuration(totalDuration)} (${streamCount} streams)`
                 : `Total Duration: ${formatDuration(totalDuration)}`;
 
-            embed.setFooter({ 
-                text: `Total Tracks: ${queue.length} • ${durationText} • Page ${currentPage}/${totalPages}` 
+            embed.setFooter({
+                text: `Total Tracks: ${queue.length} • ${durationText} • Page ${currentPage}/${totalPages}`
             });
         } else {
             embed.addFields({ name: '\u200b', value: 'No tracks in queue' });
@@ -155,20 +155,20 @@ module.exports = {
             .setColor(config.embedColor)
             .setTitle(`${emojis.info} Player Status`)
             .addFields([
-                { 
-                    name: 'Status', 
-                    value: player.playing ? `${emojis.play} Playing` : `${emojis.pause} Paused`, 
-                    inline: true 
+                {
+                    name: 'Status',
+                    value: player.playing ? `${emojis.play} Playing` : `${emojis.pause} Paused`,
+                    inline: true
                 },
-                { 
-                    name: 'Volume', 
-                    value: `${emojis.volume} ${player.volume}%`, 
-                    inline: true 
+                {
+                    name: 'Volume',
+                    value: `${emojis.volume} ${player.volume}%`,
+                    inline: true
                 },
-                { 
-                    name: 'Loop Mode', 
-                    value: `${emojis.repeat} ${player.loop === "queue" ? 'Queue' : 'Disabled'}`, 
-                    inline: true 
+                {
+                    name: 'Loop Mode',
+                    value: `${emojis.repeat} ${player.loop === "queue" ? 'Queue' : 'Disabled'}`,
+                    inline: true
                 }
             ]);
 
@@ -178,7 +178,7 @@ module.exports = {
                 `**Currently Playing:**\n${emojis.music} [${track.info.title}](${track.info.uri})\n` +
                 `${emojis.time} Duration: ${getDurationString(track)}`
             );
-            
+
             if (track.info.thumbnail && typeof track.info.thumbnail === 'string') {
                 embed.setThumbnail(track.info.thumbnail);
             }
@@ -191,10 +191,10 @@ module.exports = {
         const embed = new EmbedBuilder()
             .setColor(config.embedColor)
             .setTitle(`${emojis.info} Available Commands`)
-            .setDescription(commands.map(cmd => 
-                `${emojis.music} \`${cmd.name}\` - ${cmd.description}`
+            .setDescription(commands.map(cmd =>
+                `${emojis.music} \`${config.prefix}${cmd.name}\` - ${cmd.description}` // Added config.prefix here
             ).join('\n'))
-            .setFooter({ text: 'Prefix: ! • Example: !play <song name>' });
+            .setFooter({ text: `Prefix: ${config.prefix} • Example: ${config.prefix}play <song name>` });
         return channel.send({ embeds: [embed] });
     }
-}; 
+};
