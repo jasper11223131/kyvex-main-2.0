@@ -1,11 +1,12 @@
-const { Client, GatewayDispatchEvents, ActivityType } = require("discord.js");
+const { Client, GatewayDispatchEvents, ActivityType, PermissionsBitField } = require("discord.js"); // Add PermissionsBitField
 const { Riffy } = require("riffy");
 const { Spotify } = require("riffy-spotify");
 const config = require("./config.js");
 const messages = require("./utils/messages.js");
 const emojis = require("./emojis.js");
 const updates = require("./utils/updates.js");
-const logger = require("./utils/logger.js"); // Add this line to import the logger
+const logger = require("./utils/logger.js");
+const prefixManager = require("./utils/prefixManager.js"); // <--- NEW: Import prefixManager
 
 const client = new Client({
     intents: [
@@ -49,7 +50,7 @@ const commands = [
     { name: 'clear', description: 'Clear the current queue' },
     { name: 'status', description: 'Show player status' },
     { name: 'updates', description: 'Show the latest bot updates and changelog' },
-    { name: 'setactivity <type> <name> [url]', description: 'Set the bot\'s activity (Owner only). URL needed for streaming.' },
+    { name: 'prefix <new_prefix>', description: 'Change the bot\'s command prefix for this server (Admin only).' }, // <--- This is the new command
     { name: 'help', description: 'Show this help message' }
 ];
 
@@ -57,8 +58,9 @@ client.on("ready", () => {
     client.riffy.init(client.user.id);
     console.log(`${emojis.success} Logged in as ${client.user.tag}`);
 
-    // Initialize the logger with the client instance
+    // Initialize logger and prefixManager
     logger.init(client);
+    prefixManager.loadPrefixes(); // <--- NEW: Load prefixes on bot start
 
     // Log bot startup
     logger.log(
@@ -84,9 +86,14 @@ client.on('guildDelete', (guild) => {
 
 
 client.on("messageCreate", async (message) => {
-    if (!message.content.startsWith(config.prefix) || message.author.bot) return;
+    if (message.author.bot) return; // Ignore bot messages
 
-    const args = message.content.slice(config.prefix.length).trim().split(" ");
+    // <--- NEW: Get the prefix for the current guild dynamically
+    const guildPrefix = message.guild ? prefixManager.getPrefix(message.guild.id) : config.prefix;
+
+    if (!message.content.startsWith(guildPrefix)) return;
+
+    const args = message.content.slice(guildPrefix.length).trim().split(" ");
     const command = args.shift().toLowerCase();
 
     // Log every command usage
@@ -102,7 +109,7 @@ client.on("messageCreate", async (message) => {
 
     switch (command) {
         case "help": {
-            messages.help(message.channel, commands);
+            messages.help(message.channel, commands, guildPrefix); // <--- IMPORTANT: Pass guildPrefix
             break;
         }
 
@@ -123,7 +130,7 @@ client.on("messageCreate", async (message) => {
 
             if (activityTypeStr === 'streaming') {
                 if (args.length === 0) {
-                    return messages.error(message.channel, `For 'streaming' activity, you must provide a name and a valid URL. Usage: \`${config.prefix}setactivity streaming <name> <url>\``);
+                    return messages.error(message.channel, `For 'streaming' activity, you must provide a name and a valid URL. Usage: \`${guildPrefix}setactivity streaming <name> <url>\``);
                 }
                 const lastArg = args[args.length - 1];
                 if (lastArg.startsWith('http://') || lastArg.startsWith('https://')) {
@@ -138,9 +145,9 @@ client.on("messageCreate", async (message) => {
 
 
             if (!activityTypeStr || !activityName) {
-                let usageMessage = `Usage: \`${config.prefix}setactivity <type> <name>\`\nTypes: playing, listening, watching, competing`;
+                let usageMessage = `Usage: \`${guildPrefix}setactivity <type> <name>\`\nTypes: playing, listening, watching, competing`;
                 if (activityTypeStr === 'streaming') {
-                    usageMessage = `Usage: \`${config.prefix}setactivity streaming <name> <url>\` (URL required)`;
+                    usageMessage = `Usage: \`${guildPrefix}setactivity streaming <name> <url>\` (URL required)`;
                 }
                 return messages.error(message.channel, usageMessage);
             }
@@ -164,7 +171,7 @@ client.on("messageCreate", async (message) => {
                 case 'streaming':
                     activityType = ActivityType.Streaming;
                     if (!url) {
-                        return messages.error(message.channel, `For 'streaming' activity, you must provide a valid URL (e.g., Twitch or YouTube). Usage: \`${config.prefix}setactivity streaming <name> <url>\``);
+                        return messages.error(message.channel, `For 'streaming' activity, you must provide a valid URL (e.g., Twitch or YouTube). Usage: \`${guildPrefix}setactivity streaming <name> <url>\``);
                     }
                     const twitchRegex = /^https:\/\/(www\.)?twitch\.tv\/[a-zA-Z0-9_]+$/i;
                     const youtubeRegex = /^(https?:\/\/)?(www\.)?(youtube\.com|youtu\.be)\/.*$/i;
@@ -180,7 +187,7 @@ client.on("messageCreate", async (message) => {
             try {
                 client.user.setActivity(activityName, { type: activityType, ...activityOptions });
                 let successMsg = `Bot activity set to: **${activityTypeStr.charAt(0).toUpperCase() + activityTypeStr.slice(1)} ${activityTypeStr === 'streaming' ? '' : activityName}**`;
-                if (activityTypeStr === 'streaming') successMsg += ` ${activityName}`; // Add name back for streaming
+                if (activityTypeStr === 'streaming') successMsg += ` ${activityName}`;
                 if (url) {
                     successMsg += ` (URL: ${url})`;
                 }
@@ -188,23 +195,53 @@ client.on("messageCreate", async (message) => {
                 logger.log(
                     `${emojis.info} Activity Changed`,
                     `**User:** ${message.author.tag} (\`${message.author.id}\`)\n**New Activity:** ${activityTypeStr.charAt(0).toUpperCase() + activityTypeStr.slice(1)} ${activityName} ${url ? `(URL: ${url})` : ''}`,
-                    '#f39c12' // Orange
+                    '#f39c12'
                 );
             } catch (err) {
                 console.error(`Failed to set activity: ${err.message}`);
                 messages.error(message.channel, "Failed to set bot activity. Please try again.");
-                logger.error("Set Activity Command", err); // Log the error
+                logger.error("Set Activity Command", err);
             }
             break;
         }
 
+        case "prefix": { // <--- NEW: Prefix command logic starts here
+            if (!message.guild) {
+                return messages.error(message.channel, "This command can only be used in a server!");
+            }
+
+            // Check if the user has Administrator permission OR is the bot owner
+            if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator) && message.author.id !== config.ownerId) {
+                return messages.error(message.channel, "You need `Administrator` permissions or be the bot owner to change the prefix.");
+            }
+
+            const newPrefix = args[0];
+            if (!newPrefix) {
+                return messages.error(message.channel, `Please provide a new prefix. Current prefix for this server is: \`${guildPrefix}\`\nUsage: \`${guildPrefix}prefix <new_prefix>\``);
+            }
+            if (newPrefix.length > 5) { // Prevent excessively long prefixes
+                return messages.error(message.channel, "Prefix cannot be longer than 5 characters.");
+            }
+
+            prefixManager.setPrefix(message.guild.id, newPrefix); // Set and save the new prefix
+            messages.success(message.channel, `Prefix for this server has been set to: \`${newPrefix}\`.\nYou can now use commands like \`${newPrefix}play\`.`);
+            logger.log(
+                `${emojis.info} Prefix Changed`,
+                `**New Prefix:** \`${newPrefix}\`\n**User:** ${message.author.tag} (\`${message.author.id}\`)\n**Server:** ${message.guild.name} (\`${message.guild.id}\`)`,
+                '#3498db' // Blue
+            );
+            break;
+        }
+
+        // --- Existing music commands (play, skip, stop, etc.) will remain here ---
+        // IMPORTANT: Update any error/usage messages in existing commands to use 'guildPrefix'
+        // instead of 'config.prefix' for accuracy. Example:
         case "play": {
             const query = args.join(" ");
             if (!query) {
-                messages.error(message.channel, "Please provide a search query!");
+                messages.error(message.channel, `Please provide a search query! Usage: \`${guildPrefix}play <query>\``); // Updated usage message
                 return logger.log(`${emojis.warning} Play Command Failed`, `User ${message.author.tag} used \`!play\` without a query.`, '#f1c40f');
             }
-
             try {
                 const player = client.riffy.createConnection({
                     guildId: message.guild.id,
@@ -212,14 +249,11 @@ client.on("messageCreate", async (message) => {
                     textChannel: message.channel.id,
                     deaf: true,
                 });
-
                 const resolve = await client.riffy.resolve({
                     query: query,
                     requester: message.author,
                 });
-
                 const { loadType, tracks, playlistInfo } = resolve;
-
                 if (loadType === "playlist") {
                     for (const track of resolve.tracks) {
                         track.info.requester = message.author;
@@ -237,7 +271,6 @@ client.on("messageCreate", async (message) => {
                     track.info.requester = message.author;
                     const position = player.queue.length + 1;
                     player.queue.add(track);
-
                     messages.addedToQueue(message.channel, track, position);
                     logger.log(
                         `${emojis.music} Track Added`,
@@ -257,6 +290,7 @@ client.on("messageCreate", async (message) => {
             break;
         }
 
+        // ... continue with other music commands, updating usage messages if needed
         case "skip": {
             const player = client.riffy.players.get(message.guild.id);
             if (!player) return messages.error(message.channel, "Nothing is playing!");
@@ -320,11 +354,13 @@ client.on("messageCreate", async (message) => {
         case "queue": {
             const player = client.riffy.players.get(message.guild.id);
             if (!player) return messages.error(message.channel, "Nothing is playing!");
-            if (!player.queue.length && !player.queue.current) {
+
+            const queue = player.queue;
+            if (!queue.length && !player.queue.current) {
                 return messages.error(message.channel, "Queue is empty! Add some tracks with the play command.");
             }
-            messages.queueList(message.channel, player.queue, player.queue.current);
-            // No need to log queue command as it's just information
+
+            messages.queueList(message.channel, queue, player.queue.current);
             break;
         }
 
@@ -332,8 +368,8 @@ client.on("messageCreate", async (message) => {
             const player = client.riffy.players.get(message.guild.id);
             if (!player) return messages.error(message.channel, "Nothing is playing!");
             if (!player.queue.current) return messages.error(message.channel, "No track is currently playing!");
+
             messages.nowPlaying(message.channel, player.queue.current);
-            // No need to log nowplaying command as it's just information
             break;
         }
 
@@ -343,7 +379,7 @@ client.on("messageCreate", async (message) => {
 
             const volume = parseInt(args[0]);
             if (!volume && volume !== 0 || isNaN(volume) || volume < 0 || volume > 100) {
-                return messages.error(message.channel, "Please provide a valid volume between 0 and 100!");
+                return messages.error(message.channel, `Please provide a valid volume between 0 and 100! Usage: \`${guildPrefix}volume <0-100>\``); // Updated usage message
             }
 
             player.setVolume(volume);
@@ -394,7 +430,7 @@ client.on("messageCreate", async (message) => {
 
             const position = parseInt(args[0]);
             if (!position || isNaN(position) || position < 1 || position > player.queue.length) {
-                return messages.error(message.channel, `Please provide a valid track position between 1 and ${player.queue.length}!`);
+                return messages.error(message.channel, `Please provide a valid track position between 1 and ${player.queue.length}! Usage: \`${guildPrefix}remove <position>\``); // Updated usage message
             }
 
             const removed = player.queue.remove(position - 1);
@@ -427,13 +463,11 @@ client.on("messageCreate", async (message) => {
             if (!player) return messages.error(message.channel, "No active player found!");
 
             messages.playerStatus(message.channel, player);
-            // No need to log status command as it's just information
             break;
         }
     }
 });
 
-// Riffy (Music Player) Events Logging
 client.riffy.on("nodeConnect", (node) => {
     console.log(`${emojis.success} Node "${node.name}" connected.`);
     logger.nodeStatus(node.name, 'connected');
