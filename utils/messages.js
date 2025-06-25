@@ -1,68 +1,60 @@
-const { EmbedBuilder } = require('discord.js');
-const emojis = require('../emojis.js'); // Make sure your emojis.js path is correct
-const config = require('../config.js'); // Make sure your config.js path is correct
+const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js'); // Add Button imports
+const path = require('path');
+const emojis = require('../emojis.js');
 
-/**
- * Formats duration from milliseconds to HH:MM:SS or MM:SS.
- * @param {number} ms The duration in milliseconds.
- * @returns {string} Formatted duration string or 'LIVE'.
- */
-function formatDuration(ms) {
-    // Return 'LIVE' for invalid or zero durations (streams)
-    if (!ms || ms <= 0 || ms === 'Infinity') return 'LIVE';
-
-    // Convert to seconds
-    const seconds = Math.floor((ms / 1000) % 60);
-    const minutes = Math.floor((ms / (1000 * 60)) % 60);
-    const hours = Math.floor(ms / (1000 * 60 * 60));
-
-    // Format based on length (pad with '0' for single digits)
-    if (hours > 0) {
-        return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
-    }
-    return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+// Temporarily try to load config using an absolute path for debugging
+let config;
+try {
+    const configPath = path.resolve(__dirname, '../../config.js');
+    config = require(configPath);
+    // console.log(`[DEBUG] Config loaded from absolute path: ${configPath}`); // Keep for debugging if needed
+} catch (error) {
+    // console.error(`[DEBUG] Failed to load config from absolute path:`, error); // Keep for debugging if needed
+    config = require('../config.js');
 }
 
-/**
- * Gets the duration string for a track, handling streams.
- * @param {Object} track The track object from Riffy.
- * @returns {string} Formatted duration or 'LIVE'.
- */
+function formatDuration(ms) {
+    if (typeof ms !== 'number' || isNaN(ms) || ms <= 0) {
+        return '00:00';
+    }
+
+    const seconds = Math.floor((ms / 1000) % 60);
+    const minutes = Math.floor((ms / (1000 * 60)) % 60);
+    const hours = Math.floor((ms / (1000 * 60 * 60)) % 24);
+    const days = Math.floor(ms / (1000 * 60 * 60 * 24));
+
+    let parts = [];
+    if (days > 0) parts.push(`${days} days`);
+    if (hours > 0) parts.push(`${hours} hours`);
+    if (minutes > 0) parts.push(`${minutes} minutes`);
+    if (seconds > 0) parts.push(`${seconds} seconds`);
+
+    if (parts.length === 0) return '0 seconds';
+
+    return parts.join(', ');
+}
+
 function getDurationString(track) {
     if (track.info.isStream) return 'LIVE';
-    if (!track.info.duration) return 'N/A'; // Fallback if duration is missing
-    return formatDuration(track.info.duration);
+    const durationMs = track.info.duration || track.info.length;
+    return formatDuration(durationMs);
 }
 
 module.exports = {
-    /**
-     * Sends a simple success message.
-     * @param {TextChannel} channel The channel to send the message in.
-     * @param {string} message The success message content.
-     */
     success: (channel, message) => {
         return channel.send(`${emojis.success} | ${message}`).catch(console.error);
     },
 
-    /**
-     * Sends a simple error message.
-     * @param {TextChannel} channel The channel to send the message in.
-     * @param {string} message The error message content.
-     */
     error: (channel, message) => {
         return channel.send(`${emojis.error} | ${message}`).catch(console.error);
     },
 
-    /**
-     * Sends an embed message for the currently playing track.
-     * @param {TextChannel} channel The channel to send the message in.
-     * @param {Object} track The track object from Riffy.
-     */
-    nowPlaying: (channel, track) => {
+    // Modified nowPlaying to accept player object and return components
+    nowPlaying: async (channel, track, player) => { // Added 'player' parameter
         const embed = new EmbedBuilder()
             .setColor(config.embedColor)
             .setTitle(`${emojis.music} Now Playing`)
-            .setDescription(`**[${track.info.title}](${track.info.uri})**`); // Make title bold
+            .setDescription(`**[${track.info.title}](${track.info.uri})**`);
 
         if (track.info.thumbnail && typeof track.info.thumbnail === 'string') {
             embed.setThumbnail(track.info.thumbnail);
@@ -73,22 +65,53 @@ module.exports = {
             { name: 'Duration', value: `${emojis.time} ${getDurationString(track)}`, inline: true },
             { name: 'Requested By', value: `${emojis.info} ${track.info.requester.tag}`, inline: true }
         ])
-        .setFooter({ text: `Requested by ${track.info.requester.tag}`, iconURL: track.info.requester.displayAvatarURL() || null }) // Add requester to footer
-        .setTimestamp(); // Add timestamp for better info
+        .setFooter({ text: `Requested by ${track.info.requester.tag}`, iconURL: track.info.requester.displayAvatarURL() || null })
+        .setTimestamp();
 
-        return channel.send({ embeds: [embed] }).catch(console.error);
+        // --- Create Buttons ---
+        const row = new ActionRowBuilder()
+            .addComponents(
+                new ButtonBuilder()
+                    .setCustomId('music_toggle_play_pause')
+                    .setLabel(player && player.paused ? 'Resume' : 'Pause') // Dynamic label
+                    .setStyle(player && player.paused ? ButtonStyle.Success : ButtonStyle.Primary) // Dynamic style
+                    .setEmoji(player && player.paused ? emojis.play : emojis.pause), // Dynamic emoji using emojis object
+                new ButtonBuilder()
+                    .setCustomId('music_skip')
+                    .setLabel('Skip')
+                    .setStyle(ButtonStyle.Secondary)
+                    .setEmoji(emojis.skip), // Using emojis object
+                new ButtonBuilder()
+                    .setCustomId('music_stop')
+                    .setLabel('Stop')
+                    .setStyle(ButtonStyle.Danger)
+                    .setEmoji(emojis.stop), // Using emojis object
+                new ButtonBuilder() // Optional: Loop button
+                    .setCustomId('music_loop_toggle')
+                    .setLabel('Loop')
+                    .setStyle(ButtonStyle.Secondary)
+                    .setEmoji(emojis.loop), // Using emojis object
+                new ButtonBuilder() // Optional: Queue button
+                    .setCustomId('music_show_queue')
+                    .setLabel('Queue')
+                    .setStyle(ButtonStyle.Secondary)
+                    .setEmoji(emojis.queue), // Using emojis object
+            );
+
+        try {
+            // Send embed with components
+            const sentMessage = await channel.send({ embeds: [embed], components: [row] });
+            return sentMessage;
+        } catch (error) {
+            console.error(`Failed to send now playing message with buttons:`, error);
+            return null;
+        }
     },
 
-    /**
-     * Sends an embed message when a track is added to the queue.
-     * @param {TextChannel} channel The channel to send the message in.
-     * @param {Object} track The track object from Riffy.
-     * @param {number} position The position of the track in the queue.
-     */
-    addedToQueue: (channel, track, position) => {
+    addedToQueue: async (channel, track, position) => {
         const embed = new EmbedBuilder()
             .setColor(config.embedColor)
-            .setDescription(`${emojis.success} Added to queue: **[${track.info.title}](${track.info.uri})**`); // Make title bold
+            .setDescription(`${emojis.success} Added to queue: **[${track.info.title}](${track.info.uri})**`);
 
         if (track.info.thumbnail && typeof track.info.thumbnail === 'string') {
             embed.setThumbnail(track.info.thumbnail);
@@ -97,30 +120,30 @@ module.exports = {
         embed.addFields([
             { name: 'Artist', value: `${emojis.info} ${track.info.author}`, inline: true },
             { name: 'Duration', value: `${emojis.time} ${getDurationString(track)}`, inline: true },
-            { name: 'Position', value: `${emojis.queue} #${position}`, inline: true }
+            { name: 'Position', value: `${emojis.queue1} #${position}`, inline: true }
         ])
-        .setFooter({ text: `Requested by ${track.info.requester.tag}`, iconURL: track.info.requester.displayAvatarURL() || null }) // Add requester to footer
-        .setTimestamp(); // Add timestamp for better info
+        .setFooter({ text: `Requested by ${track.info.requester.tag}`, iconURL: track.info.requester.displayAvatarURL() || null })
+        .setTimestamp();
 
-        return channel.send({ embeds: [embed] }).catch(console.error);
+        try {
+            const sentMessage = await channel.send({ embeds: [embed] });
+            return sentMessage;
+        } catch (error) {
+            console.error(`Failed to send added to queue message:`, error);
+            return null;
+        }
     },
 
-    /**
-     * Sends an embed message when a playlist is added to the queue.
-     * @param {TextChannel} channel The channel to send the message in.
-     * @param {Object} playlistInfo The playlist info object from Riffy.
-     * @param {Array<Object>} tracks The array of tracks in the playlist.
-     */
-    addedPlaylist: (channel, playlistInfo, tracks) => {
+    addedPlaylist: async (channel, playlistInfo, tracks) => {
         const embed = new EmbedBuilder()
             .setColor(config.embedColor)
             .setTitle(`${emojis.success} Added Playlist`)
-            .setDescription(`**[${playlistInfo.name}](${playlistInfo.uri || 'No URL'})**`); // Make title bold, add URL if available
+            .setDescription(`**[${playlistInfo.name}](${playlistInfo.uri || 'No URL'})**`);
 
-        // Calculate total duration excluding streams
         const totalDuration = tracks.reduce((acc, track) => {
-            if (!track.info.isStream && track.info.duration) {
-                return acc + track.info.duration;
+            const trackDuration = track.info.duration || track.info.length;
+            if (!track.info.isStream && typeof trackDuration === 'number' && trackDuration > 0) {
+                return acc + trackDuration;
             }
             return acc;
         }, 0);
@@ -137,41 +160,35 @@ module.exports = {
             embed.addFields({ name: 'Streams Included', value: `${emojis.info} ${streamCount}`, inline: true });
         }
 
+        // Modified logic to ensure thumbnail is a string before setting
         if (playlistInfo.thumbnail && typeof playlistInfo.thumbnail === 'string') {
             embed.setThumbnail(playlistInfo.thumbnail);
-        } else if (tracks.length > 0 && tracks[0].info.thumbnail) { // Fallback to first track's thumbnail
+        } else if (tracks.length > 0 && tracks[0].info.thumbnail && typeof tracks[0].info.thumbnail === 'string') {
             embed.setThumbnail(tracks[0].info.thumbnail);
         }
 
         embed.setFooter({ text: 'The playlist will start playing soon' })
-        .setTimestamp(); // Add timestamp for better info
+        .setTimestamp();
 
-        return channel.send({ embeds: [embed] }).catch(console.error);
+        try {
+            const sentMessage = await channel.send({ embeds: [embed] });
+            return sentMessage;
+        } catch (error) {
+            console.error(`Failed to send added playlist message:`, error);
+            return null;
+        }
     },
 
-    /**
-     * Sends a message indicating the queue has ended.
-     * @param {TextChannel} channel The channel to send the message in.
-     */
     queueEnded: (channel) => {
         return channel.send(`${emojis.info} | Queue has ended. Leaving voice channel.`).catch(console.error);
     },
 
-    /**
-     * Sends an embed message with the current queue list.
-     * @param {TextChannel} channel The channel to send the message in.
-     * @param {Array<Object>} queue The Riffy queue array.
-     * @param {Object} currentTrack The currently playing track.
-     * @param {number} currentPage The current page number (default to 1).
-     * @param {number} totalPages The total number of pages (default to 1).
-     */
     queueList: (channel, queue, currentTrack, currentPage = 1, totalPages = 1) => {
         const embed = new EmbedBuilder()
             .setColor(config.embedColor)
             .setTitle(`${emojis.queue} Music Queue`)
-            .setTimestamp(); // Add timestamp for better info
+            .setTimestamp();
 
-        // Display currently playing track
         if (currentTrack) {
             embed.setDescription(
                 `**${emojis.play} Now Playing:** [${currentTrack.info.title}](${currentTrack.info.uri}) - \`${getDurationString(currentTrack)}\`\n\n**Up Next:**`
@@ -183,115 +200,103 @@ module.exports = {
             embed.setDescription("**Queue is empty!** Add some tracks with the play command.");
         }
 
-        // List upcoming tracks
         if (queue.length > 0) {
             const tracksList = queue.map((track, i) =>
                 `\`${String(i + 1).padStart(2, '0')}\` ${emojis.song} [${track.info.title}](${track.info.uri}) - \`${getDurationString(track)}\``
             ).join('\n');
-            embed.addFields({ name: '\u200b', value: tracksList.substring(0, 1024) }); // Truncate if too long
-        } else if (!currentTrack) { // Only if nothing is playing and queue is empty
-             embed.addFields({ name: '\u200b', value: 'No tracks in queue.' });
+            embed.addFields({ name: '\u200B', value: tracksList });
+        } else if (!currentTrack) {
+            embed.setDescription("**Queue is empty!** Add some tracks with the play command.");
         }
 
-        // Calculate total duration for queue (excluding streams)
-        const queueTotalDuration = queue.reduce((acc, track) => {
-            if (!track.info.isStream && track.info.duration) {
-                return acc + track.info.duration;
-            }
-            return acc;
-        }, 0);
-        const queueStreamCount = queue.filter(t => t.info.isStream).length;
-
-        let footerText = `Total Tracks in Queue: ${queue.length}`;
-        if (queueTotalDuration > 0) {
-            footerText += ` • Est. Queue Duration: ${formatDuration(queueTotalDuration)}`;
+        if (queue.length > 0) {
+            embed.setFooter({ text: `Page ${currentPage}/${totalPages} | Total Tracks: ${queue.length + (currentTrack ? 1 : 0)}` });
         }
-        if (queueStreamCount > 0) {
-            footerText += ` (${queueStreamCount} streams)`;
-        }
-        footerText += ` • Page ${currentPage}/${totalPages}`;
-
-        embed.setFooter({ text: footerText });
 
         return channel.send({ embeds: [embed] }).catch(console.error);
     },
 
-    /**
-     * Sends an embed message with the current player status.
-     * @param {TextChannel} channel The channel to send the message in.
-     * @param {Player} player The Riffy player object.
-     */
     playerStatus: (channel, player) => {
         const embed = new EmbedBuilder()
             .setColor(config.embedColor)
             .setTitle(`${emojis.info} Player Status`)
             .addFields([
-                {
-                    name: 'Status',
-                    value: player.paused ? `${emojis.pause} Paused` : `${emojis.play} Playing`,
-                    inline: true
-                },
-                {
-                    name: 'Volume',
-                    value: `${emojis.volume} ${player.volume}%`,
-                    inline: true
-                },
-                {
-                    name: 'Loop Mode',
-                    value: `${emojis.repeat} ${player.loop === "queue" ? 'Queue' : 'Disabled'}`,
-                    inline: true
-                }
+                { name: 'Status', value: player.playing ? `${emojis.play} Playing` : (player.paused ? `${emojis.pause} Paused` : `${emojis.stop} Stopped`), inline: true },
+                { name: 'Volume', value: `${emojis.volume} ${player.volume}%`, inline: true },
+                { name: 'Loop Mode', value: `${emojis.repeat} ${player.loop.charAt(0).toUpperCase() + player.loop.slice(1)}`, inline: true },
+                { name: 'Queue Size', value: `${emojis.queue} ${player.queue.length} tracks`, inline: true },
             ])
-            .setTimestamp(); // Add timestamp for better info
+            .setTimestamp();
 
-        if (player.voiceChannel) {
-            embed.addFields({ name: 'Voice Channel', value: `<#${player.voiceChannel}>`, inline: true });
-        }
         if (player.queue.current) {
-            const track = player.queue.current;
-            embed.setDescription(
-                `**Currently Playing:**\n**[${track.info.title}](${track.info.uri})**\n` +
-                `${emojis.time} Duration: \`${formatDuration(player.position)}\` / \`${getDurationString(track)}\``
-            );
-
-            if (track.info.thumbnail && typeof track.info.thumbnail === 'string') {
-                embed.setThumbnail(track.info.thumbnail);
-            }
-        } else {
-            embed.setDescription('No track is currently playing.');
+            embed.addFields({ name: 'Current Track', value: `[${player.queue.current.info.title}](${player.queue.current.info.uri})`, inline: false });
         }
 
         return channel.send({ embeds: [embed] }).catch(console.error);
     },
 
-    /**
-     * Sends a help message listing all available commands, matching the provided screenshot.
-     * @param {TextChannel} channel The channel to send the message in.
-     * @param {Array<Object>} commands An array of command objects { name, description }.
-     * @param {string} currentPrefix The actual prefix for the current guild.
-     */
-    help: (channel, commands, currentPrefix) => {
+    ping: (channel, discordPing, botPing, nodeLatencies) => {
         const embed = new EmbedBuilder()
             .setColor(config.embedColor)
-            .setTitle(`${emojis.info} Available Commands`)
-            .setTimestamp(); // Matches the screenshot's time display
+            .setTitle(`${emojis.info} Pong!`)
+            .setDescription('Here are my latencies:')
+            .addFields(
+                { name: 'Discord API Latency', value: `${emojis.discord} \`${Math.round(discordPing)}ms\``, inline: true },
+                { name: 'Bot Latency', value: `${emojis.info} \`${Math.round(botPing)}ms\``, inline: true },
+            )
+            .setTimestamp();
 
-        // Sort commands alphabetically by name
-        commands.sort((a, b) => a.name.localeCompare(b.name));
-
-        const commandList = commands.map(cmd => {
-            // Check if cmd.description exists, otherwise use a default or empty string
-            const description = cmd.description ? cmd.description : 'No description provided.';
-            return `${emojis.music} \`${currentPrefix}${cmd.name}\` - ${description}`;
-        }).join('\n');
-
-        embed.setDescription(commandList);
-
-        // Add the prefix and example line to the footer
-        embed.setFooter({
-            text: `Prefix: ${currentPrefix} • Example: ${currentPrefix}play <song name>`
-        });
+        if (Object.keys(nodeLatencies).length > 0) {
+            let nodeField = '';
+            for (const nodeName in nodeLatencies) {
+                nodeField += `\n${emojis.music} \`${nodeName}\`: \`${Math.round(nodeLatencies[nodeName])}ms\``;
+            }
+            embed.addFields({ name: 'Riffy Node Latencies', value: nodeField, inline: false });
+        } else {
+            embed.addFields({ name: 'Riffy Node Latencies', value: `${emojis.warning} No active Riffy nodes found.`, inline: false });
+        }
 
         return channel.send({ embeds: [embed] }).catch(console.error);
-    }
+    },
+
+    uptime: (channel, uptimeMs) => {
+        const formattedUptime = formatDuration(uptimeMs);
+        const embed = new EmbedBuilder()
+            .setColor(config.embedColor)
+            .setTitle(`${emojis.info} Bot Uptime`)
+            .setDescription(`I have been online for: \`${formattedUptime}\``)
+            .setTimestamp();
+
+        return channel.send({ embeds: [embed] }).catch(console.error);
+    },
+
+    help: (channel, commands, prefix) => {
+        const musicCommands = commands.filter(cmd => ![
+            'updates', 'prefix', 'help', 'ping', 'uptime', 'setactivity'
+        ].includes(cmd.name.split(' ')[0]));
+
+        const utilityCommands = commands.filter(cmd => [
+            'updates', 'prefix', 'help', 'ping', 'uptime', 'setactivity'
+        ].includes(cmd.name.split(' ')[0]));
+
+        const embed = new EmbedBuilder()
+            .setColor(config.embedColor)
+            .setTitle(`${emojis.info} Kyvex Music Bot Commands`)
+            .setDescription(`My current prefix for this server is: \`${prefix}\`\n\nTo use a command, type \`${prefix}<command>\`\n\n`);
+
+        if (musicCommands.length > 0) {
+            const musicField = musicCommands.map(cmd => `\`${prefix}${cmd.name}\`: ${cmd.description}`).join('\n');
+            embed.addFields({ name: '🎶 Music Commands', value: musicField, inline: false });
+        }
+
+        if (utilityCommands.length > 0) {
+            const utilityField = utilityCommands.map(cmd => `\`${prefix}${cmd.name}\`: ${cmd.description}`).join('\n');
+            embed.addFields({ name: '🛠️ Utility Commands', value: utilityField, inline: false });
+        }
+
+        embed.setFooter({ text: `Requested by ${channel.guild.name}` })
+             .setTimestamp();
+
+        return channel.send({ embeds: [embed] }).catch(console.error);
+    },
 };
