@@ -6,6 +6,15 @@ const config = require("../config.js"); // Import config for embed color
 // Add new updates to the top of this array so the latest is always shown first.
 const botUpdates = [
     {
+        version: "1.0.2", // New version number
+        date: "June 25, 2025", // Current date
+        changes: [
+            "Added the **`ping`** command to check bot and node latency.",
+            "Implemented a **`prefix`** command for server administrators to set a custom bot prefix.",
+            "Added the **`uptime`** command to show how long the bot has been online."
+        ]
+    },
+    {
         version: "1.0.1",
         date: "June 24, 2025", // Current date
         changes: [
@@ -34,7 +43,7 @@ function sendUpdates(channel) {
 
     const embed = new EmbedBuilder()
         .setColor(config.embedColor || "#0099ff") // Use embedColor from config or a default blue
-        .setTitle("<:Update:1387100783492989111> Bot Updates & Changelog")
+        .setTitle("<:Update:1387100783492989111> Bot Updates & Changelog") // Make sure this emoji ID is correct or update it in emojis.js
         .setDescription("Here are the latest changes and improvements to the bot:")
         .setTimestamp()
         .setFooter({ text: "Bot Updates" });
